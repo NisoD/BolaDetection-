@@ -1,29 +1,25 @@
-# **BOLA Detector**
+# BOLA Attack Detection Tool
 
-This tool analyzes code files to detect potential **Broken Object Level Authorization (BOLA)** vulnerabilities. It checks for weak access control in balance operations and insufficient authorization in account handling endpoints.
+A Python-based CLI tool for detecting potential BOLA (Broken Object Level Authorization) attacks by analyzing API access logs.
 
-## **How It Works**
-- **Balance Handling Risks**: Identifies weak or missing access controls for balance operations.
-- **Accounts Endpoint Risks**: Detects vulnerabilities like minimal role-based access control or user ID manipulation.
+## Overview
 
-## **Usage**
+This tool analyzes JSON Lines formatted log files to detect potential BOLA attacks and unauthorized access attempts on sensitive endpoints (/accounts and /balance). It specifically looks for:
 
-1. **Install Requirements**  
-   Make sure Python is installed on your system. Install the `click` library if not already installed:
-   pip install click
+- Multiple rapid accesses to different resources by the same user (HIGH severity)
+- Failed authorization attempts indicated by 4xx responses (MEDIUM severity)
 
-2. **Run the Script**  
-   To scan a code file for BOLA vulnerabilities, use the following command:
-   python bolaDetector.py <path_to_code_file>
+## How it Works
 
-3. **Optional: Save Results**  
-   To save the output to a JSON file, use the `--output` option:
-   python bolaDetector.py <path_to_code_file> --output <output_file>
+The script processes each log entry and:
+1. Tracks user access patterns to sensitive endpoints
+2. Flags when a user accesses 3 different resources in quick succession
+3. Identifies unauthorized access attempts through 4xx response codes
+4. Generates detailed alerts for suspicious patterns
+
 
 ## **Example**
 ```bash
-python bolaDetector.py access-2024-11-25.json --output vulnerabilities_report.json
+python bolaDetector.py access-2024-11-25.json 
 ```
-## **Output**  
-- If vulnerabilities are found, they are listed in the terminal and (optionally) saved to the specified output file.
-- If no vulnerabilities are detected, a confirmation message is displayed.
+
