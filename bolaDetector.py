@@ -1,66 +1,106 @@
 import click
-import re
 import json
+from collections import defaultdict
+from typing import Dict, List
 
-class BOLADetector:
-    def __init__(self):
-        self.vulnerabilities = []
 
-    def detect_bola_risks(self, code):
-        """Detect potential BOLA vulnerabilities in the code"""
-        # Check balance access method
-        if self._check_balance_access_control(code):
-            self.vulnerabilities.append("Potential BOLA in Balance Handling")
+def extract_auth_info(headers_str: str) -> str:
+    """Extract authentication information from headers string."""
+    try:
+        # Handle different header formats
+        if isinstance(headers_str, dict):
+            return headers_str.get('Authorization', 'unknown')
+        elif isinstance(headers_str, str):
+            # Look for Authorization header in string format
+            if 'Authorization' in headers_str:
+                return headers_str.split('Authorization')[1].split(',')[0].strip()
+        return 'unknown'
+    except Exception:
+        return 'unknown'
 
-        # Check accounts handler
-        if self._check_accounts_handler_authorization(code):
-            self.vulnerabilities.append("Potential BOLA in Accounts Endpoint")
-
-        return self.vulnerabilities
-
-    def _check_balance_access_control(self, code):
-        """Analyze balance access control method"""
-        # Look for weak access control in balance operations
-        balance_access_risks = [
-            # Checking if user ID verification is weak
-            "if !checkBalanceAccess(claims, userID)" in code,
-            # Potential parameter manipulation risk
-            "userIDStr := r.URL.Query().Get(\"user_id\")" in code
-        ]
-        return any(balance_access_risks)
-
-    def _check_accounts_handler_authorization(self, code):
-        """Check accounts handler for authorization vulnerabilities"""
-        # Look for weak authorization checks
-        accounts_auth_risks = [
-            # Minimal role-based access control
-            "if claims.Role != RoleAdmin" in code,
-            # Direct user ID manipulation possibilities
-            "input.UserID  int     `json:\"user_id\"`" in code
-        ]
-        return any(accounts_auth_risks)
 
 @click.command()
-@click.argument('filepath', type=click.Path(exists=True))
-@click.option('--output', '-o', type=click.Path(), help='Output file for vulnerability report')
-def detect_bola(filepath, output):
-    """Detect Broken Object Level Authorization (BOLA) vulnerabilities"""
-    with open(filepath, 'r') as file:
-        code = file.read()
+@click.argument('logfile', type=click.Path(exists=True))
+def detect_bola(logfile):
+    """Analyze JSON Lines log file for potential BOLA attacks."""
+    logs = []
+    with open(logfile) as f:
+        for line in f:
+            try:
+                logs.append(json.loads(line.strip()))
+            except json.JSONDecodeError as e:
+                click.echo(f"Warning: Skipping invalid JSON line: {e}")
+                continue
 
-    detector = BOLADetector()
-    vulnerabilities = detector.detect_bola_risks(code)
+    # Track access patterns
+    user_patterns: Dict[str, List[Dict]] = defaultdict(list)
+    alerts = []
 
-    if vulnerabilities:
-        click.echo("BOLA Vulnerabilities Detected:")
-        for vuln in vulnerabilities:
-            click.echo(f"- {vuln}")
-        
-        if output:
-            with open(output, 'w') as out_file:
-                json.dump(vulnerabilities, out_file, indent=2)
+    sensitive_paths = {
+        '/accounts': 'account',
+        '/balance': 'balance'
+    }
+
+    for idx, entry in enumerate(logs):
+        try:
+            url = entry['req']['url']
+            # Skip non-sensitive endpoints
+            if not any(path in url for path in sensitive_paths):
+                continue
+
+            user_id = extract_auth_info(entry['req']['headers'])
+            resource_type = next(
+                (v for k, v in sensitive_paths.items() if k in url), '')
+            params = entry['req'].get('qs_params', '')
+
+            # Track access pattern
+            user_patterns[user_id].append({
+                'url': url,
+                'params': params,
+                'index': idx
+            })
+
+            # Analyze patterns for potential BOLA
+            if len(user_patterns[user_id]) >= 3:
+                last_3_accesses = user_patterns[user_id][-3:]
+                unique_resources = len(
+                    set(access['params'] for access in last_3_accesses))
+
+                if unique_resources >= 3:
+                    alerts.append({
+                        'entry_index': idx,
+                        'severity': 'HIGH',
+                        'type': 'Potential BOLA Attack',
+                        'description': f'Rapid access to multiple {resource_type} resources',
+                        'evidence': f'User accessed {unique_resources} different resources in last 3 requests'
+                    })
+
+            # Check for 403 responses indicating attempted unauthorized access
+            if entry['rsp']['status_class'].startswith('4'):
+                alerts.append({
+                    'entry_index': idx,
+                    'severity': 'MEDIUM',
+                    'type': 'Unauthorized Access Attempt',
+                    'description': f'Failed authorization on {resource_type} endpoint',
+                    'evidence': f'{entry["rsp"]["status_class"]} response on {url}'
+                })
+        except Exception as e:
+            click.echo(f"Warning: Error processing entry {idx}: {str(e)}")
+            continue
+
+    # Output results
+    if alerts:
+        click.echo('🚨 Potential BOLA attacks detected:')
+        for alert in alerts:
+            click.echo(f"\nEntry #{alert['entry_index']}:")
+            click.echo(f"Severity: {alert['severity']}")
+            click.echo(f"Type: {alert['type']}")
+            click.echo(f"Description: {alert['description']}")
+            click.echo(f"Evidence: {alert['evidence']}")
+        click.echo(f"\nTotal alerts: {len(alerts)}")
     else:
-        click.echo("No BOLA vulnerabilities detected.")
+        click.echo('✅ No potential BOLA attacks detected')
+
 
 if __name__ == '__main__':
     detect_bola()
