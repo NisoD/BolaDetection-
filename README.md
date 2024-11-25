@@ -21,8 +21,9 @@ This tool analyzes code files to detect potential **Broken Object Level Authoriz
    python bolaDetector.py <path_to_code_file> --output <output_file>
 
 ## **Example**
+```bash
 python bolaDetector.py access-2024-11-25.json --output vulnerabilities_report.json
-
+```
 ## **Output**  
 - If vulnerabilities are found, they are listed in the terminal and (optionally) saved to the specified output file.
 - If no vulnerabilities are detected, a confirmation message is displayed.
